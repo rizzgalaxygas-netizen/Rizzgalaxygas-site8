@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { background: #1a1a1a; display: flex; flex-direction: column; align-items: center; color: white; font-family: sans-serif; }
+        .controls { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 10px; text-align: center; }
+        .board { display: grid; grid-template-columns: repeat(8, 45px); grid-template-rows: repeat(8, 45px); border: 5px solid #444; position: relative; }
+        .square { width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 32px; cursor: pointer; user-select: none; transition: transform 0.5s; }
+        .white-sq { background: #ebecd0; }
+        .black-sq { background: #779556; }
+        .selected { background: #f6f669 !important; }
+        
+        /* Effects */
+        #overlay { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,0,0,0.3); z-index: 200; align-items: center; justify-content: center; flex-direction: column; }
+        .no-scope-text { font-size: 48px; color: white; text-shadow: 2px 2px #000; font-weight: bold; animation: shake 0.5s infinite; }
+        @keyframes shake { 0% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, -1px); } }
+        .fallen { transform: rotate(90deg) !important; opacity: 0.5; }
+
+        /* Promotion Modal */
+        #promotion-modal {
+            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.8); z-index: 100;
+        }
+        #promotion-modal button { padding: 10px; cursor: pointer; font-size: 24px; border: 1px solid #ccc; background: #eee; }
+    </style>
+</head>
+<body>
+    <h2>Chess Master 3000</h2>
+    
+    <div class="controls">
+        Difficulty: 
+        <select id="diff">
+            <option value="1">1</option> <option value="2">2</option> <option value="3">3</option>
+            <option value="4">4</option> <option value="5">5</option> <option value="6">6</option>
+            <option value="7">7</option> <option value="8">8</option> <option value="9">9</option>
+            <option value="10">10</option>
+        </select>
+        Color: <select id="color"><option value="w">White</option><option value="b">Black</option></select>
+        <button onclick="startGame()">Start Game</button>
+    </div>
+
+    <div id="promotion-modal">
+        <button onclick="finishPromotion('q')">♕</button>
+        <button onclick="finishPromotion('r')">♖</button>
+        <button onclick="finishPromotion('b')">♗</button>
+        <button onclick="finishPromotion('n')">♘</button>
+    </div>
+
+    <div id="overlay">
+        <div class="no-scope-text">GET NO-SCOPED!!!</div>
+        <button onclick="resetToMenu()">Back to Menu</button>
+    </div>
+
+    <div id="board" class="board"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script>
+        let game = new Chess();
+        let playerColor = 'w';
+        let isThinking = false;
+        let selected = null;
+        let pendingMove = null;
+
+        function startGame() {
+            game = new Chess();
+            playerColor = document.getElementById('color').value;
+            document.getElementById('overlay').style.display = 'none';
+            renderBoard();
+            if (playerColor === 'b') setTimeout(makeAIMove, 1000);
+        }
+
+        function renderBoard() {
+            const boardEl = document.getElementById('board');
+            boardEl.innerHTML = '';
+            const b = game.board();
+            const range = playerColor === 'w' ? [0, 8, 1] : [7, -1, -1];
+            const symbols = { 'w': { 'k': '♔', 'q': '♕', 'r': '♖', 'b': '♗', 'n': '♘', 'p': '♙' }, 'b': { 'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟' } };
+
+            for (let i = range[0]; i !== range[1]; i += range[2]) {
+                for (let j = (playerColor === 'w' ? 0 : 7); (playerColor === 'w' ? j < 8 : j >= 0); (playerColor === 'w' ? j++ : j--)) {
+                    const sqName = String.fromCharCode(97 + j) + (8 - i);
+                    const sq = b[i][j];
+                    const div = document.createElement('div');
+                    div.className = `square ${(i + j) % 2 === 0 ? 'white-sq' : 'black-sq'}`;
+                    div.id = 'sq-' + sqName;
+                    if (selected === sqName) div.classList.add('selected');
+                    
+                    if (sq) {
+                        div.textContent = symbols[sq.color][sq.type];
+                        div.style.color = sq.color === 'w' ? '#fff' : '#000';
+                        if (sq.color === 'w') div.style.textShadow = "1px 1px 2px #000";
+                    }
+                    div.onclick = () => handleSquareClick(sqName);
+                    boardEl.appendChild(div);
+                }
+            }
+        }
+
+        function handleSquareClick(sq) {
+            if (isThinking || game.turn() !== playerColor) return;
+            
+            if (selected) {
+                const piece = game.get(selected);
+                const isPromotion = (piece.type === 'p' && (sq[1] === '8' || sq[1] === '1'));
+                
+                if (isPromotion) {
+                    pendingMove = { from: selected, to: sq };
+                    document.getElementById('promotion-modal').style.display = 'block';
+                    selected = null;
+                } else {
+                    const move = game.move({ from: selected, to: sq });
+                    selected = null;
+                    if (move) {
+                        renderBoard();
+                        checkGameOver();
+                        if (!game.game_over()) startAIMove();
+                    } else {
+                        selected = game.get(sq) && game.get(sq).color === playerColor ? sq : null;
+                        renderBoard();
+                    }
+                }
+            } else {
+                const piece = game.get(sq);
+                if (piece && piece.color === playerColor) { selected = sq; renderBoard(); }
+            }
+        }
+
+        function finishPromotion(pieceType) {
+            game.move({ from: pendingMove.from, to: pendingMove.to, promotion: pieceType });
+            document.getElementById('promotion-modal').style.display = 'none';
+            renderBoard();
+            checkGameOver();
+            if (!game.game_over()) startAIMove();
+        }
+
+        function checkGameOver() {
+            if (game.in_checkmate()) {
+                const kingColor = game.turn() === 'w' ? 'b' : 'w';
+                const board = game.board();
+                for(let r=0; r<8; r++) {
+                    for(let c=0; c<8; c++) {
+                        if(board[r][c] && board[r][c].type === 'k' && board[r][c].color === kingColor) {
+                            const sqName = String.fromCharCode(97 + c) + (8 - r);
+                            document.getElementById('sq-' + sqName).classList.add('fallen');
+                            document.getElementById('overlay').style.display = 'flex';
+                        }
+                    }
+                }
+            }
+        }
+
+        function startAIMove() {
+            isThinking = true;
+            setTimeout(makeAIMove, 2000); 
+        }
+
+        function makeAIMove() {
+            const moves = game.moves();
+            if (moves.length === 0) return;
+            game.move(moves[Math.floor(Math.random() * moves.length)]);
+            renderBoard();
+            isThinking = false;
+            checkGameOver();
+        }
+
+        function resetToMenu() {
+            document.getElementById('overlay').style.display = 'none';
+            game = new Chess();
+            renderBoard();
+        }
+    </script>
+</body>
+</html>
